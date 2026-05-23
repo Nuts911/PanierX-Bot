@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands
 import os
+import asyncio
 
 TOKEN = os.getenv("TOKEN")
 OWNER_ID = 766337426846646273
@@ -10,17 +11,17 @@ intents.message_content = True
 intents.guilds = True
 intents.members = True
 
-bot = commands.Bot(command_prefix="+", intents=intents)
+bot = commands.Bot(command_prefix="+", intents=intents, help_command=None)
 
 ticket_data = {}  # guild_id -> category_id
 
 
-def only_owner(ctx):
+def is_owner(ctx):
     return ctx.author.id == OWNER_ID
 
 
-def embed_msg(text):
-    return discord.Embed(description=text, color=discord.Color.white())
+def emb(text, color=discord.Color.white()):
+    return discord.Embed(description=text, color=color)
 
 
 # ---------------- TICKET BUTTON ----------------
@@ -31,7 +32,7 @@ class TicketView(discord.ui.View):
         self.category_id = category_id
 
     @discord.ui.button(label="Ouvrir un ticket", style=discord.ButtonStyle.secondary)
-    async def ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def open_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
 
         category = interaction.guild.get_channel(self.category_id)
 
@@ -48,7 +49,7 @@ class TicketView(discord.ui.View):
         )
 
         await interaction.response.send_message(
-            embed=embed_msg(f"🎫 Ticket créé : {channel.mention}"),
+            embed=emb(f"🎫 Ticket créé : {channel.mention}"),
             ephemeral=True
         )
 
@@ -57,7 +58,7 @@ class TicketView(discord.ui.View):
 
 @bot.command()
 async def setupticket(ctx):
-    if not only_owner(ctx):
+    if not is_owner(ctx):
         return await ctx.message.delete()
 
     await ctx.message.delete()
@@ -65,12 +66,12 @@ async def setupticket(ctx):
     def check(m):
         return m.author.id == OWNER_ID and m.channel == ctx.channel
 
-    await ctx.send(embed=embed_msg("📁 Mentionne la catégorie des tickets :"))
+    await ctx.send(embed=emb("📁 Mentionne la catégorie des tickets :"))
     msg1 = await bot.wait_for("message", check=check)
     category_id = int(msg1.content.replace("<#", "").replace(">", ""))
     await msg1.delete()
 
-    await ctx.send(embed=embed_msg("💬 Mentionne le salon du bouton :"))
+    await ctx.send(embed=emb("💬 Mentionne le salon du bouton :"))
     msg2 = await bot.wait_for("message", check=check)
     channel_id = int(msg2.content.replace("<#", "").replace(">", ""))
     await msg2.delete()
@@ -87,33 +88,31 @@ async def setupticket(ctx):
 
     await channel.send(embed=embed, view=TicketView(category_id))
 
-    await ctx.send(embed=embed_msg("✅ Setup ticket terminé"))
+    await ctx.send(embed=emb("✅ Setup terminé"))
 
 
 # ---------------- UNSETUP ----------------
 
 @bot.command()
 async def unsetupticket(ctx):
-    if not only_owner(ctx):
+    if not is_owner(ctx):
         return await ctx.message.delete()
 
     await ctx.message.delete()
 
     ticket_data.pop(ctx.guild.id, None)
 
-    await ctx.send(embed=embed_msg("🗑️ Ticket désactivé pour ce serveur"))
+    await ctx.send(embed=emb("🗑️ Ticket system supprimé"))
 
 
-# ---------------- SEND COMMAND FIX ----------------
+# ---------------- SEND ----------------
 
 @bot.command()
-async def send(ctx):
-    if not only_owner(ctx):
+async def send(ctx, *, content=None):
+    if not is_owner(ctx):
         return await ctx.message.delete()
 
     await ctx.message.delete()
-
-    content = ctx.message.content[len("+send"):].strip()
 
     embed = discord.Embed(color=discord.Color.white())
 
@@ -126,22 +125,39 @@ async def send(ctx):
     await ctx.channel.send(embed=embed)
 
 
+# ---------------- CLOSE TICKET ----------------
+
+@bot.command()
+async def close(ctx):
+    if not is_owner(ctx):
+        return await ctx.message.delete()
+
+    if not ctx.channel.name.startswith("ticket-"):
+        return await ctx.send(embed=emb("❌ Pas un ticket"), delete_after=5)
+
+    await ctx.send(embed=emb("🔒 Fermeture du ticket dans 5 secondes...", discord.Color.orange()))
+
+    await asyncio.sleep(5)
+    await ctx.channel.delete()
+
+
 # ---------------- HELP ----------------
 
 @bot.command()
 async def help(ctx):
-    if not only_owner(ctx):
+    if not is_owner(ctx):
         return await ctx.message.delete()
 
     await ctx.message.delete()
 
     embed = discord.Embed(
-        title="Commandes bot",
+        title="Commandes",
         color=discord.Color.white(),
         description="""
-`+setupticket` → setup ticket
-`+unsetupticket` → supprime ticket system
-`+send` → envoie message + image
+`+setupticket` → setup ticket system
+`+unsetupticket` → supprime system
+`+send` → envoie embed + image
+`+close` → ferme un ticket
 `+help` → commandes
 """
     )
@@ -149,7 +165,7 @@ async def help(ctx):
     await ctx.send(embed=embed)
 
 
-# ---------------- AUTO DELETE COMMANDS ----------------
+# ---------------- DELETE COMMANDS ----------------
 
 @bot.event
 async def on_message(message):
