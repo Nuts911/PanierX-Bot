@@ -3,6 +3,7 @@ from discord.ext import commands
 import os
 import asyncio
 import aiohttp
+import re
 
 TOKEN = os.getenv("TOKEN")
 OWNER_ID = 766337426846646273
@@ -39,7 +40,6 @@ class CloseView(discord.ui.View):
 
     @discord.ui.button(label="🔒 Close ticket", style=discord.ButtonStyle.danger)
     async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
-
         if interaction.user.id != OWNER_ID:
             return await interaction.response.send_message(
                 embed=emb("❌ Pas permission"),
@@ -47,7 +47,7 @@ class CloseView(discord.ui.View):
             )
 
         await interaction.response.send_message(
-            embed=emb("🔒 Fermeture..."),
+            embed=emb("🔒 Fermeture dans 3 secondes..."),
             ephemeral=True
         )
 
@@ -64,10 +64,9 @@ class TicketView(discord.ui.View):
 
     @discord.ui.button(label="🎫 Ouvrir un ticket", style=discord.ButtonStyle.secondary)
     async def open(self, interaction: discord.Interaction, button: discord.ui.Button):
-
         if interaction.user.id in user_ticket:
             return await interaction.response.send_message(
-                embed=emb("❌ Tu as déjà un ticket"),
+                embed=emb("❌ Tu as déjà un ticket ouvert"),
                 ephemeral=True
             )
 
@@ -89,19 +88,19 @@ class TicketView(discord.ui.View):
 
         embed = discord.Embed(
             title="🎫 Ticket ouvert",
-            description="Support actif\nClique sur 🔒 pour fermer",
+            description="Support actif\nClique sur 🔒 pour fermer le ticket",
             color=discord.Color.light_gray()
         )
 
         await channel.send(embed=embed, view=CloseView())
 
         await interaction.response.send_message(
-            embed=emb(f"Ticket créé : {channel.mention}"),
+            embed=emb(f"✅ Ticket créé : {channel.mention}"),
             ephemeral=True
         )
 
 
-# ---------------- SETUP ----------------
+# ---------------- SETUP TICKET ----------------
 
 @bot.command()
 async def setupticket(ctx):
@@ -118,7 +117,7 @@ async def setupticket(ctx):
     category_id = int(msg1.content.replace("<#", "").replace(">", ""))
     await msg1.delete()
 
-    await ctx.send(embed=emb("💬 Mentionne le salon du bouton"))
+    await ctx.send(embed=emb("💬 Mentionne le salon pour le bouton"))
     msg2 = await bot.wait_for("message", check=check)
     channel_id = int(msg2.content.replace("<#", "").replace(">", ""))
     await msg2.delete()
@@ -127,16 +126,15 @@ async def setupticket(ctx):
 
     embed = discord.Embed(
         title="🎫 Support",
-        description="Clique sur le bouton pour ouvrir un ticket",
+        description="Clique sur le bouton ci-dessous pour ouvrir un ticket",
         color=discord.Color.light_gray()
     )
 
     await channel.send(embed=embed, view=TicketView(category_id))
+    await ctx.send(embed=emb("✅ Setup ticket terminé"), delete_after=3)
 
-    await ctx.send(embed=emb("✅ Setup terminé"))
 
-
-# ---------------- UNSETUP ----------------
+# ---------------- UNSETUP TICKET ----------------
 
 @bot.command()
 async def unsetupticket(ctx):
@@ -145,11 +143,82 @@ async def unsetupticket(ctx):
 
     user_ticket.clear()
     await ctx.message.delete()
+    await ctx.send(embed=emb("🗑️ Ticket system reset"), delete_after=3)
 
-    await ctx.send(embed=emb("🗑️ Ticket system reset"))
+
+# ---------------- FETCH GIF URL (TENOR FIX) ----------------
+
+async def get_real_gif_url(url: str) -> str | None:
+    """
+    Récupère la vraie URL du GIF depuis Tenor.
+    Méthode 1 : oEmbed API
+    Méthode 2 : Scraping direct de la page HTML
+    Méthode 3 : Retourne l'URL directe si c'est déjà un .gif
+    """
+
+    # Déjà une URL directe vers un gif/image
+    if re.search(r"\.(gif|png|jpg|jpeg|webp)(\?|$)", url, re.IGNORECASE):
+        return url
+
+    # Tenor
+    if "tenor.com" in url:
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/122.0.0.0 Safari/537.36"
+            )
+        }
+
+        async with aiohttp.ClientSession(headers=headers) as session:
+
+            # ── Méthode 1 : oEmbed ──
+            try:
+                oembed_url = f"https://tenor.com/oembed?url={url}&format=json"
+                async with session.get(oembed_url, timeout=aiohttp.ClientTimeout(total=8)) as r:
+                    if r.status == 200:
+                        data = await r.json(content_type=None)
+                        gif = data.get("url") or data.get("thumbnail_url")
+                        if gif:
+                            return gif
+            except Exception:
+                pass
+
+            # ── Méthode 2 : Scraping HTML ──
+            try:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as r:
+                    if r.status == 200:
+                        html = await r.text()
+
+                        # Cherche les URLs .gif dans le HTML
+                        matches = re.findall(
+                            r'https://[^"\'>\s]+\.gif[^"\'>\s]*',
+                            html
+                        )
+                        if matches:
+                            # Préfère les URLs media.tenor.com
+                            for m in matches:
+                                if "media.tenor.com" in m:
+                                    return m
+                            return matches[0]
+
+                        # Cherche og:image ou og:video dans les meta tags
+                        og = re.search(
+                            r'<meta[^>]+property=["\']og:(?:image|video)["\'][^>]+content=["\']([^"\']+)["\']',
+                            html
+                        )
+                        if og:
+                            return og.group(1)
+
+            except Exception:
+                pass
+
+        return None  # Échec total
+
+    return url  # URL inconnue, on retourne telle quelle
 
 
-# ---------------- 🔥 +SEND ULTRA FIX (TENOR + IMAGE + TEXT) ----------------
+# ---------------- +SEND ULTRA FIX ----------------
 
 @bot.command()
 async def send(ctx, *, args=None):
@@ -162,43 +231,34 @@ async def send(ctx, *, args=None):
         return
 
     parts = args.split()
-
     text_parts = []
-    media = None
+    media_url = None
 
     for p in parts:
-        if p.startswith("http"):
-            media = p
+        if p.startswith("http://") or p.startswith("https://"):
+            if media_url is None:  # On garde seulement la première URL
+                media_url = p
         else:
             text_parts.append(p)
 
-    text = " ".join(text_parts)
+    text = " ".join(text_parts).strip()
 
+    # ── Résolution de l'URL media ──
+    real_url = None
+    if media_url:
+        real_url = await get_real_gif_url(media_url)
+
+    # ── Construction de l'embed ──
     embed = discord.Embed(color=discord.Color.light_gray())
 
     if text:
         embed.description = text
 
-    # ---------------- FIX TENOR PRO ----------------
-    if media:
-        if "tenor.com" in media:
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(f"https://tenor.com/oembed?url={media}") as r:
-                        data = await r.json()
-
-                        gif_url = data.get("url") or data.get("thumbnail_url")
-
-                        if gif_url:
-                            embed.set_image(url=gif_url)
-                        else:
-                            embed.description = (embed.description or "") + f"\n{media}"
-
-            except:
-                embed.description = (embed.description or "") + f"\n{media}"
-
-        else:
-            embed.set_image(url=media)
+    if real_url:
+        embed.set_image(url=real_url)
+    elif media_url:
+        # URL non résolue → on la met en texte pour ne pas perdre le contenu
+        embed.description = (embed.description or "") + f"\n{media_url}"
 
     await ctx.channel.send(embed=embed)
 
@@ -213,20 +273,20 @@ async def help(ctx):
     await ctx.message.delete()
 
     embed = discord.Embed(
-        title="📌 Commands",
+        title="📌 Commandes",
         color=discord.Color.light_gray(),
-        description="""
-+setupticket → setup
-+unsetupticket → reset
-+send → texte + gif + image + lien
-+help → commandes
-"""
+        description=(
+            "`+setupticket` → Setup le système de tickets\n"
+            "`+unsetupticket` → Reset le système\n"
+            "`+send [texte] [url]` → Envoie texte + gif + image\n"
+            "`+help` → Affiche cette aide"
+        )
     )
 
     await ctx.send(embed=embed)
 
 
-# ---------------- AUTO DELETE ----------------
+# ---------------- AUTO DELETE COMMANDS (non-owner) ----------------
 
 @bot.event
 async def on_message(message):
@@ -239,5 +299,7 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
+
+# ---------------- RUN ----------------
 
 bot.run(TOKEN)
