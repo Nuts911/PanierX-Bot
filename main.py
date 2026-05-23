@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 import os
 import asyncio
+import aiohttp
 
 TOKEN = os.getenv("TOKEN")
 OWNER_ID = 766337426846646273
@@ -148,7 +149,7 @@ async def unsetupticket(ctx):
     await ctx.send(embed=emb("🗑️ Ticket system reset"))
 
 
-# ---------------- 🔥 FIX +SEND ULTRA STABLE (GIF + IMAGE + LINK) ----------------
+# ---------------- 🔥 +SEND ULTRA FIX (TENOR + IMAGE + TEXT) ----------------
 
 @bot.command()
 async def send(ctx, *, args=None):
@@ -178,13 +179,23 @@ async def send(ctx, *, args=None):
     if text:
         embed.description = text
 
-    # ---------------- FIX IMAGE/GIF ----------------
+    # ---------------- FIX TENOR PRO ----------------
     if media:
-
-        # Tenor fix (version propre Discord compatible)
         if "tenor.com" in media:
-            # convert simple embed version (Discord supporte preview)
-            embed.description = (embed.description or "") + f"\n{media}"
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f"https://tenor.com/oembed?url={media}") as r:
+                        data = await r.json()
+
+                        gif_url = data.get("url") or data.get("thumbnail_url")
+
+                        if gif_url:
+                            embed.set_image(url=gif_url)
+                        else:
+                            embed.description = (embed.description or "") + f"\n{media}"
+
+            except:
+                embed.description = (embed.description or "") + f"\n{media}"
 
         else:
             embed.set_image(url=media)
