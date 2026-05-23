@@ -4,6 +4,7 @@ import os
 import asyncio
 import aiohttp
 import re
+import io
 
 TOKEN = os.getenv("TOKEN")
 OWNER_ID = 766337426846646273
@@ -146,79 +147,132 @@ async def unsetupticket(ctx):
     await ctx.send(embed=emb("🗑️ Ticket system reset"), delete_after=3)
 
 
-# ---------------- FETCH GIF URL (TENOR FIX) ----------------
+# ---------------- CORE : DOWNLOAD + SEND FILE ----------------
 
-async def get_real_gif_url(url: str) -> str | None:
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/122.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8",
+}
+
+
+async def resolve_tenor(url: str, session: aiohttp.ClientSession) -> str | None:
+    """Extrait la vraie URL .gif depuis une page Tenor"""
+
+    # ── Méthode 1 : oEmbed JSON ──
+    try:
+        oembed = f"https://tenor.com/oembed?url={url}&format=json"
+        async with session.get(oembed, timeout=aiohttp.ClientTimeout(total=8)) as r:
+            if r.status == 200:
+                data = await r.json(content_type=None)
+                for key in ("url", "thumbnail_url"):
+                    val = data.get(key, "")
+                    if val.endswith(".gif"):
+                        return val
+    except Exception:
+        pass
+
+    # ── Méthode 2 : Scraping HTML ──
+    try:
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as r:
+            if r.status == 200:
+                html = await r.text()
+
+                # Cherche toutes les URLs .gif
+                gifs = re.findall(r'https://media\.tenor\.com/[^"\'<>\s]+\.gif', html)
+                if gifs:
+                    return gifs[0]
+
+                # Cherche og:image
+                og = re.search(
+                    r'content=["\']([^"\']+\.gif[^"\']*)["\']',
+                    html
+                )
+                if og:
+                    return og.group(1)
+    except Exception:
+        pass
+
+    # ── Méthode 3 : API Tenor non officielle ──
+    try:
+        # Extraire l'ID du GIF depuis l'URL
+        match = re.search(r"-(\d+)$", url.rstrip("/"))
+        if match:
+            gif_id = match.group(1)
+            api_url = f"https://tenor.com/oembed?url=https://tenor.com/view/{gif_id}&format=json"
+            async with session.get(api_url, timeout=aiohttp.ClientTimeout(total=8)) as r:
+                if r.status == 200:
+                    data = await r.json(content_type=None)
+                    val = data.get("url", "")
+                    if val:
+                        return val
+    except Exception:
+        pass
+
+    return None
+
+
+async def download_media(url: str) -> tuple[io.BytesIO | None, str]:
     """
-    Récupère la vraie URL du GIF depuis Tenor.
-    Méthode 1 : oEmbed API
-    Méthode 2 : Scraping direct de la page HTML
-    Méthode 3 : Retourne l'URL directe si c'est déjà un .gif
+    Télécharge n'importe quelle image/gif et retourne (BytesIO, filename)
+    Supporte : Tenor, Giphy, URLs directes .gif/.png/.jpg/.webp
     """
 
-    # Déjà une URL directe vers un gif/image
-    if re.search(r"\.(gif|png|jpg|jpeg|webp)(\?|$)", url, re.IGNORECASE):
-        return url
+    async with aiohttp.ClientSession(headers=HEADERS) as session:
 
-    # Tenor
-    if "tenor.com" in url:
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/122.0.0.0 Safari/537.36"
-            )
-        }
+        real_url = url
 
-        async with aiohttp.ClientSession(headers=headers) as session:
+        # ── Résolution Tenor ──
+        if "tenor.com" in url:
+            resolved = await resolve_tenor(url, session)
+            if resolved:
+                real_url = resolved
+            else:
+                return None, ""
 
-            # ── Méthode 1 : oEmbed ──
+        # ── Résolution Giphy ──
+        elif "giphy.com" in url and not url.endswith(".gif"):
             try:
-                oembed_url = f"https://tenor.com/oembed?url={url}&format=json"
-                async with session.get(oembed_url, timeout=aiohttp.ClientTimeout(total=8)) as r:
-                    if r.status == 200:
-                        data = await r.json(content_type=None)
-                        gif = data.get("url") or data.get("thumbnail_url")
-                        if gif:
-                            return gif
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                    html = await r.text()
+                    match = re.search(r'https://media\d?\.giphy\.com/media/[^"\'<>\s]+\.gif', html)
+                    if match:
+                        real_url = match.group(0)
             except Exception:
                 pass
 
-            # ── Méthode 2 : Scraping HTML ──
-            try:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as r:
-                    if r.status == 200:
-                        html = await r.text()
+        # ── Téléchargement du fichier ──
+        try:
+            async with session.get(real_url, timeout=aiohttp.ClientTimeout(total=20)) as r:
+                if r.status != 200:
+                    return None, ""
 
-                        # Cherche les URLs .gif dans le HTML
-                        matches = re.findall(
-                            r'https://[^"\'>\s]+\.gif[^"\'>\s]*',
-                            html
-                        )
-                        if matches:
-                            # Préfère les URLs media.tenor.com
-                            for m in matches:
-                                if "media.tenor.com" in m:
-                                    return m
-                            return matches[0]
+                content_type = r.headers.get("Content-Type", "")
+                data = await r.read()
 
-                        # Cherche og:image ou og:video dans les meta tags
-                        og = re.search(
-                            r'<meta[^>]+property=["\']og:(?:image|video)["\'][^>]+content=["\']([^"\']+)["\']',
-                            html
-                        )
-                        if og:
-                            return og.group(1)
+                # Déterminer l'extension
+                if "gif" in content_type or real_url.endswith(".gif"):
+                    ext = "gif"
+                elif "png" in content_type or real_url.endswith(".png"):
+                    ext = "png"
+                elif "jpeg" in content_type or "jpg" in content_type:
+                    ext = "jpg"
+                elif "webp" in content_type:
+                    ext = "webp"
+                else:
+                    ext = "gif"  # fallback
 
-            except Exception:
-                pass
+                return io.BytesIO(data), f"media.{ext}"
 
-        return None  # Échec total
-
-    return url  # URL inconnue, on retourne telle quelle
+        except Exception:
+            return None, ""
 
 
-# ---------------- +SEND ULTRA FIX ----------------
+# ---------------- +SEND ----------------
 
 @bot.command()
 async def send(ctx, *, args=None):
@@ -236,31 +290,49 @@ async def send(ctx, *, args=None):
 
     for p in parts:
         if p.startswith("http://") or p.startswith("https://"):
-            if media_url is None:  # On garde seulement la première URL
+            if media_url is None:
                 media_url = p
         else:
             text_parts.append(p)
 
-    text = " ".join(text_parts).strip()
+    text = " ".join(text_parts).strip() or None
 
-    # ── Résolution de l'URL media ──
-    real_url = None
-    if media_url:
-        real_url = await get_real_gif_url(media_url)
+    # ── Pas de media ──
+    if not media_url:
+        embed = discord.Embed(
+            description=text,
+            color=discord.Color.light_gray()
+        )
+        return await ctx.channel.send(embed=embed)
 
-    # ── Construction de l'embed ──
-    embed = discord.Embed(color=discord.Color.light_gray())
+    # ── Téléchargement du media ──
+    loading_msg = await ctx.channel.send(embed=emb("⏳ Chargement..."))
 
-    if text:
-        embed.description = text
+    file_bytes, filename = await download_media(media_url)
 
-    if real_url:
-        embed.set_image(url=real_url)
-    elif media_url:
-        # URL non résolue → on la met en texte pour ne pas perdre le contenu
-        embed.description = (embed.description or "") + f"\n{media_url}"
+    await loading_msg.delete()
 
-    await ctx.channel.send(embed=embed)
+    # ── Envoi ──
+    if file_bytes and filename:
+        # Upload direct du fichier = GIF animé garanti
+        file = discord.File(file_bytes, filename=filename)
+
+        if text:
+            # Embed avec texte + image uploadée
+            embed = discord.Embed(
+                description=text,
+                color=discord.Color.light_gray()
+            )
+            embed.set_image(url=f"attachment://{filename}")
+            await ctx.channel.send(embed=embed, file=file)
+        else:
+            # Juste le fichier (animé)
+            await ctx.channel.send(file=file)
+
+    else:
+        # Fallback : on envoie juste le lien brut
+        content = f"{text}\n{media_url}" if text else media_url
+        await ctx.channel.send(content)
 
 
 # ---------------- HELP ----------------
@@ -278,7 +350,7 @@ async def help(ctx):
         description=(
             "`+setupticket` → Setup le système de tickets\n"
             "`+unsetupticket` → Reset le système\n"
-            "`+send [texte] [url]` → Envoie texte + gif + image\n"
+            "`+send [texte] [url]` → Envoie texte + gif animé + image\n"
             "`+help` → Affiche cette aide"
         )
     )
@@ -286,7 +358,7 @@ async def help(ctx):
     await ctx.send(embed=embed)
 
 
-# ---------------- AUTO DELETE COMMANDS (non-owner) ----------------
+# ---------------- AUTO DELETE ----------------
 
 @bot.event
 async def on_message(message):
