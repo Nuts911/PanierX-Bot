@@ -19,6 +19,42 @@ bot = commands.Bot(command_prefix="+", intents=intents, help_command=None)
 user_ticket = {}
 
 # ================================================================
+#  CONSTANTES
+# ================================================================
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36"
+}
+
+# Domaines ignorés (pas du media, on les garde dans le texte)
+IGNORED_DOMAINS = [
+    "gofile.io", "gofile.me",
+    "mediafire.com",
+    "mega.nz", "mega.co.nz",
+    "drive.google.com",
+    "dropbox.com",
+    "wetransfer.com", "we.tl",
+    "anonfiles.com",
+    "pixeldrain.com",
+    "krakenfiles.com",
+    "uploadhaven.com",
+    "zippyshare.com",
+    "1fichier.com",
+    "uptobox.com",
+    "turbobit.net",
+    "file.io",
+    "sendspace.com",
+    "workupload.com"
+]
+
+# Domaines reconnus comme media
+MEDIA_DOMAINS = ["tenor.com", "giphy.com", "imgur.com"]
+
+# Extensions reconnues comme media
+MEDIA_EXTENSIONS = [".gif", ".png", ".jpg", ".jpeg", ".webp", ".bmp"]
+
+
+# ================================================================
 #  UTILS
 # ================================================================
 
@@ -28,12 +64,27 @@ def emb(text: str, color=discord.Color.light_gray()) -> discord.Embed:
 def is_owner(ctx) -> bool:
     return ctx.author.id == OWNER_ID
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36"
-}
+def is_media_url(url: str) -> bool:
+    """Vérifie si l'URL est un media (image/gif) et PAS un lien de partage"""
+    lower = url.lower()
+
+    # Ignoré = pas du media
+    if any(d in lower for d in IGNORED_DOMAINS):
+        return False
+
+    # Domaine media connu
+    if any(d in lower for d in MEDIA_DOMAINS):
+        return True
+
+    # Extension media directe
+    if any(lower.split("?")[0].endswith(ext) for ext in MEDIA_EXTENSIONS):
+        return True
+
+    return False
+
 
 # ================================================================
-#  RESOLVER - Trouve la vraie URL du media
+#  RESOLVER - Trouve la vraie URL du GIF/image
 # ================================================================
 
 async def get_media_url(url: str) -> str | None:
@@ -42,12 +93,16 @@ async def get_media_url(url: str) -> str | None:
         # ── TENOR ──
         if "tenor.com" in url:
 
-            # Méthode 1 : API Tenor v2 avec clé publique
+            # 1) API Tenor v2
             try:
                 match = re.search(r"-(\d+)$", url.rstrip("/"))
                 if match:
                     gif_id = match.group(1)
-                    api = f"https://tenor.googleapis.com/v2/posts?ids={gif_id}&key=AIzaSyAyimkuYQYF_FXVALexPuGQctUWRURdCY0&media_filter=gif,mediumgif&limit=1"
+                    api = (
+                        f"https://tenor.googleapis.com/v2/posts?ids={gif_id}"
+                        f"&key=AIzaSyAyimkuYQYF_FXVALexPuGQctUWRURdCY0"
+                        f"&media_filter=gif,mediumgif,tinygif&limit=1"
+                    )
                     async with session.get(api, timeout=aiohttp.ClientTimeout(total=8)) as r:
                         if r.status == 200:
                             data = await r.json(content_type=None)
@@ -61,7 +116,7 @@ async def get_media_url(url: str) -> str | None:
             except Exception:
                 pass
 
-            # Méthode 2 : Scraping HTML
+            # 2) Scraping HTML
             try:
                 async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as r:
                     if r.status == 200:
@@ -69,15 +124,18 @@ async def get_media_url(url: str) -> str | None:
                         gifs = re.findall(r'https://media\.tenor\.com/[^"\'<>\s]+\.gif', html)
                         if gifs:
                             return gifs[0]
-                        og = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', html)
+                        og = re.search(r'content=["\']([^"\']+\.gif[^"\']*)["\']', html)
                         if og:
                             return og.group(1)
             except Exception:
                 pass
 
-            # Méthode 3 : oEmbed
+            # 3) oEmbed
             try:
-                async with session.get(f"https://tenor.com/oembed?url={url}&format=json", timeout=aiohttp.ClientTimeout(total=8)) as r:
+                async with session.get(
+                    f"https://tenor.com/oembed?url={url}&format=json",
+                    timeout=aiohttp.ClientTimeout(total=8)
+                ) as r:
                     if r.status == 200:
                         data = await r.json(content_type=None)
                         for key in ("url", "thumbnail_url"):
@@ -108,11 +166,10 @@ async def get_media_url(url: str) -> str | None:
 
 
 # ================================================================
-#  DOWNLOADER - Télécharge le fichier
+#  DOWNLOADER
 # ================================================================
 
 async def download_file(url: str) -> tuple[io.BytesIO | None, str]:
-    """Retourne (BytesIO, filename) ou (None, "")"""
     async with aiohttp.ClientSession(headers=HEADERS) as session:
         try:
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=25)) as r:
@@ -122,11 +179,14 @@ async def download_file(url: str) -> tuple[io.BytesIO | None, str]:
                 ct = r.headers.get("Content-Type", "")
                 data = await r.read()
 
+                if len(data) < 100:
+                    return None, ""
+
                 if "gif" in ct or ".gif" in url:
                     ext = "gif"
                 elif "png" in ct or ".png" in url:
                     ext = "png"
-                elif "jpeg" in ct or "jpg" in ct or ".jpg" in url:
+                elif "jpeg" in ct or "jpg" in ct or ".jpg" in url or ".jpeg" in url:
                     ext = "jpg"
                 elif "webp" in ct or ".webp" in url:
                     ext = "webp"
@@ -153,7 +213,6 @@ class CloseView(discord.ui.View):
     async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != OWNER_ID:
             return await interaction.response.send_message(embed=emb("❌ Pas la permission."), ephemeral=True)
-
         await interaction.response.send_message(embed=emb("🔒 Fermeture dans 3 secondes..."), ephemeral=True)
         await asyncio.sleep(3)
         await interaction.channel.delete()
@@ -174,7 +233,6 @@ class TicketView(discord.ui.View):
             return await interaction.response.send_message(embed=emb("❌ Tu as déjà un ticket ouvert."), ephemeral=True)
 
         category = interaction.guild.get_channel(self.category_id)
-
         overwrites = {
             interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False),
             interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
@@ -199,13 +257,12 @@ class TicketView(discord.ui.View):
             color=discord.Color.light_gray()
         )
         embed.set_footer(text=f"Ticket de {interaction.user.name}")
-
         await channel.send(embed=embed, view=CloseView())
         await interaction.response.send_message(embed=emb(f"✅ Ticket créé : {channel.mention}"), ephemeral=True)
 
 
 # ================================================================
-#  COMMANDS
+#  SETUP / UNSETUP
 # ================================================================
 
 @bot.command()
@@ -231,14 +288,13 @@ async def setupticket(ctx):
     await q2.delete()
 
     channel = bot.get_channel(channel_id)
-
     embed = discord.Embed(
         title="🎫 Support",
         description="Clique sur le bouton ci-dessous pour ouvrir un ticket.",
         color=discord.Color.light_gray()
     )
-
     await channel.send(embed=embed, view=TicketView(category_id))
+
     confirm = await ctx.send(embed=emb("✅ Setup terminé !"))
     await asyncio.sleep(3)
     await confirm.delete()
@@ -257,9 +313,7 @@ async def unsetupticket(ctx):
 
 
 # ================================================================
-#  +SEND  (inspiré exactement du screenshot)
-#  embed.set_image(url="attachment://media.gif")
-#  send(embed=embed, file=discord.File(buf, filename="media.gif"))
+#  +SEND  —  RESPECTE LES SAUTS DE LIGNE + IGNORE GOFILE ETC
 # ================================================================
 
 @bot.command()
@@ -272,47 +326,51 @@ async def send(ctx, *, args=None):
     if not args:
         return
 
-    # Sépare le texte et l'URL
-    parts = args.split()
-    text_parts = []
+    # ── Trouver toutes les URLs dans le message ──
+    all_urls = re.findall(r'https?://\S+', args)
+
+    # ── Trouver la première URL media (pas gofile etc) ──
     media_url = None
+    for url in all_urls:
+        if is_media_url(url):
+            media_url = url
+            break
 
-    for p in parts:
-        if (p.startswith("http://") or p.startswith("https://")) and media_url is None:
-            media_url = p
-        else:
-            text_parts.append(p)
+    # ── Extraire le texte en retirant UNIQUEMENT l'URL media ──
+    # Les autres URLs (gofile etc) restent dans le texte
+    if media_url:
+        text = args.replace(media_url, "").strip()
+    else:
+        text = args.strip()
 
-    text = " ".join(text_parts).strip() or None
+    # ── Remplacer \n littéral par de vrais sauts de ligne ──
+    text = text.replace("\\n", "\n")
 
-    # ── Pas de média ──
+    # ── Pas de media : embed texte simple ──
     if not media_url:
         embed = discord.Embed(color=discord.Color.light_gray())
         if text:
             embed.description = text
         return await ctx.channel.send(embed=embed)
 
-    # ── Avec média ──
+    # ── Avec media : télécharger et envoyer ──
     loading = await ctx.channel.send(embed=emb("⏳ Chargement..."))
 
-    # Étape 1 : Résoudre l'URL réelle
     real_url = await get_media_url(media_url)
 
     if not real_url:
         await loading.delete()
-        # Fallback texte brut
-        content = f"{text}\n{media_url}" if text else media_url
-        return await ctx.channel.send(content=content)
+        # Media pas trouvé, envoie le texte + lien brut
+        embed = discord.Embed(color=discord.Color.light_gray())
+        full = f"{text}\n{media_url}" if text else media_url
+        embed.description = full
+        return await ctx.channel.send(embed=embed)
 
-    # Étape 2 : Télécharger le fichier
     buf, filename = await download_file(real_url)
 
     await loading.delete()
 
     if buf and filename:
-        # ── Méthode exacte du screenshot ──
-        # embed.set_image(url="attachment://media.gif")
-        # send(embed=embed, file=discord.File(buf, filename="media.gif"))
         embed = discord.Embed(color=discord.Color.light_gray())
         if text:
             embed.description = text
@@ -322,7 +380,6 @@ async def send(ctx, *, args=None):
         await ctx.channel.send(embed=embed, file=file)
 
     else:
-        # Fallback URL directe dans l'embed
         embed = discord.Embed(color=discord.Color.light_gray())
         if text:
             embed.description = text
@@ -345,11 +402,14 @@ async def help(ctx):
         title="📌 Commandes",
         color=discord.Color.light_gray(),
         description=(
-            "`+send [texte] [url]` — Texte + GIF animé + image\n"
-            "> Tenor ✅ · Giphy ✅ · URL directe ✅\n\n"
-            "`+setupticket` — Configure les tickets\n"
-            "`+unsetupticket` — Reset les tickets\n"
-            "`+help` — Cette aide"
+            "**`+send [texte] [url]`**\n"
+            "> Envoie un embed avec texte + image/GIF animé\n"
+            "> Supporte : Tenor · Giphy · Imgur · URLs directes\n"
+            "> Ignore : Gofile · Mediafire · Mega · etc\n"
+            "> Utilise `\\n` pour les sauts de ligne\n\n"
+            "**`+setupticket`** — Configure les tickets\n"
+            "**`+unsetupticket`** — Reset les tickets\n"
+            "**`+help`** — Cette aide"
         )
     )
 
