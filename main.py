@@ -13,8 +13,7 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="+", intents=intents, help_command=None)
 
-ticket_data = {}        # guild_id -> category_id
-user_ticket = {}        # user_id -> channel_id
+user_ticket = {}
 
 
 # ---------------- EMBED ----------------
@@ -33,17 +32,17 @@ class CloseView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="🔒 Close", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="🔒 Close ticket", style=discord.ButtonStyle.danger)
     async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
 
         if interaction.user.id != OWNER_ID:
             return await interaction.response.send_message(
-                embed=emb("❌ Tu n'as pas la permission"),
+                embed=emb("❌ Pas permission"),
                 ephemeral=True
             )
 
         await interaction.response.send_message(
-            embed=emb("🔒 Fermeture du ticket..."),
+            embed=emb("🔒 Fermeture..."),
             ephemeral=True
         )
 
@@ -51,7 +50,7 @@ class CloseView(discord.ui.View):
         await interaction.channel.delete()
 
 
-# ---------------- TICKET BUTTON ----------------
+# ---------------- TICKET SYSTEM ----------------
 
 class TicketView(discord.ui.View):
     def __init__(self, category_id: int):
@@ -61,12 +60,9 @@ class TicketView(discord.ui.View):
     @discord.ui.button(label="🎫 Ouvrir un ticket", style=discord.ButtonStyle.secondary)
     async def open(self, interaction: discord.Interaction, button: discord.ui.Button):
 
-        user_id = interaction.user.id
-
-        # ❌ déjà un ticket
-        if user_id in user_ticket:
+        if interaction.user.id in user_ticket:
             return await interaction.response.send_message(
-                embed=emb("❌ Tu as déjà un ticket ouvert"),
+                embed=emb("❌ Tu as déjà un ticket"),
                 ephemeral=True
             )
 
@@ -84,11 +80,11 @@ class TicketView(discord.ui.View):
             overwrites=overwrites
         )
 
-        user_ticket[user_id] = channel.id
+        user_ticket[interaction.user.id] = channel.id
 
         embed = discord.Embed(
-            title="🎫 Ticket",
-            description="Support ouvert\nClique sur 🔒 pour fermer",
+            title="🎫 Ticket ouvert",
+            description="Support activé\nClique sur 🔒 pour fermer",
             color=discord.Color.light_gray()
         )
 
@@ -100,7 +96,7 @@ class TicketView(discord.ui.View):
         )
 
 
-# ---------------- SETUP TICKET CLEAN ----------------
+# ---------------- SETUP CLEAN (FIX IMPORTANT) ----------------
 
 @bot.command()
 async def setupticket(ctx):
@@ -112,32 +108,30 @@ async def setupticket(ctx):
 
     await ctx.message.delete()
 
+    # catégorie
     await ctx.send(embed=emb("📁 Mentionne la catégorie des tickets"))
     msg1 = await bot.wait_for("message", check=check)
     category_id = int(msg1.content.replace("<#", "").replace(">", ""))
     await msg1.delete()
 
+    # salon
     await ctx.send(embed=emb("💬 Mentionne le salon du bouton"))
     msg2 = await bot.wait_for("message", check=check)
     channel_id = int(msg2.content.replace("<#", "").replace(">", ""))
     await msg2.delete()
 
-    await ctx.send(embed=emb("⏳ Setup en cours..."))
-
     channel = bot.get_channel(channel_id)
 
+    # 🔥 MESSAGE FINAL (RESTE VISIBLE)
     embed = discord.Embed(
-        title="Support",
+        title="🎫 Support",
         description="Clique sur le bouton pour ouvrir un ticket",
         color=discord.Color.light_gray()
     )
 
-    msg = await channel.send(embed=embed, view=TicketView(category_id))
+    await channel.send(embed=embed, view=TicketView(category_id))
 
-    # ❌ supprime messages inutiles
-    await ctx.channel.purge(limit=10)
-
-    await ctx.send(embed=emb("✅ Setup terminé (clean)"))
+    await ctx.send(embed=emb("✅ Setup terminé"))
 
 
 # ---------------- UNSETUP ----------------
@@ -147,20 +141,20 @@ async def unsetupticket(ctx):
     if not is_owner(ctx):
         return await ctx.message.delete()
 
+    user_ticket.clear()
     await ctx.message.delete()
 
-    ticket_data.pop(ctx.guild.id, None)
-    user_ticket.clear()
-
-    await ctx.send(embed=emb("🗑️ Ticket system supprimé"))
+    await ctx.send(embed=emb("🗑️ Ticket system reset"))
 
 
-# ---------------- SEND FIX (IMAGE OK) ----------------
+# ---------------- FIXED SEND (100% WORK IMAGE) ----------------
 
 @bot.command()
 async def send(ctx, *, content=None):
     if not is_owner(ctx):
         return await ctx.message.delete()
+
+    attachments = ctx.message.attachments
 
     await ctx.message.delete()
 
@@ -169,8 +163,9 @@ async def send(ctx, *, content=None):
     if content:
         embed.description = content
 
-    if ctx.message.attachments:
-        embed.set_image(url=ctx.message.attachments[0].url)
+    # ✔️ image fix réel
+    if attachments:
+        embed.set_image(url=attachments[0].url)
 
     await ctx.channel.send(embed=embed)
 
@@ -188,9 +183,9 @@ async def help(ctx):
         title="📌 Commands",
         color=discord.Color.light_gray(),
         description="""
-+setupticket → setup system
-+unsetupticket → reset system
-+send → embed + image
++setupticket → setup
++unsetupticket → reset
++send → message + image
 +help → commands
 """
     )
@@ -198,7 +193,7 @@ async def help(ctx):
     await ctx.send(embed=embed)
 
 
-# ---------------- AUTO DELETE ----------------
+# ---------------- DELETE COMMANDS ----------------
 
 @bot.event
 async def on_message(message):
