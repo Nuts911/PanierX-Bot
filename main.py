@@ -100,7 +100,7 @@ class TicketView(discord.ui.View):
         )
 
 
-# ---------------- SETUP TICKET ----------------
+# ---------------- SETUP ----------------
 
 @bot.command()
 async def setupticket(ctx):
@@ -148,7 +148,7 @@ async def unsetupticket(ctx):
     await ctx.send(embed=emb("🗑️ Ticket system reset"))
 
 
-# ---------------- 🔥 FIXED +SEND (ULTRA STABLE GIF / IMAGE / TEXT) ----------------
+# ---------------- 🔥 FIX +SEND ULTRA STABLE (GIF + IMAGE + LINK) ----------------
 
 @bot.command()
 async def send(ctx, *, args=None):
@@ -178,8 +178,16 @@ async def send(ctx, *, args=None):
     if text:
         embed.description = text
 
+    # ---------------- FIX IMAGE/GIF ----------------
     if media:
-        embed.set_image(url=media)
+
+        # Tenor fix (version propre Discord compatible)
+        if "tenor.com" in media:
+            # convert simple embed version (Discord supporte preview)
+            embed.description = (embed.description or "") + f"\n{media}"
+
+        else:
+            embed.set_image(url=media)
 
     await ctx.channel.send(embed=embed)
 
@@ -197,9 +205,9 @@ async def help(ctx):
         title="📌 Commands",
         color=discord.Color.light_gray(),
         description="""
-+setupticket → setup system
-+unsetupticket → reset system
-+send → texte + GIF + image + lien
++setupticket → setup
++unsetupticket → reset
++send → texte + gif + image + lien
 +help → commandes
 """
     )
