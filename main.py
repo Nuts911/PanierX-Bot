@@ -41,12 +41,12 @@ class CloseView(discord.ui.View):
 
         if interaction.user.id != OWNER_ID:
             return await interaction.response.send_message(
-                embed=emb("❌ Pas la permission"),
+                embed=emb("❌ Pas permission"),
                 ephemeral=True
             )
 
         await interaction.response.send_message(
-            embed=emb("🔒 Fermeture du ticket..."),
+            embed=emb("🔒 Fermeture..."),
             ephemeral=True
         )
 
@@ -66,7 +66,7 @@ class TicketView(discord.ui.View):
 
         if interaction.user.id in user_ticket:
             return await interaction.response.send_message(
-                embed=emb("❌ Tu as déjà un ticket ouvert"),
+                embed=emb("❌ Tu as déjà un ticket"),
                 ephemeral=True
             )
 
@@ -148,25 +148,38 @@ async def unsetupticket(ctx):
     await ctx.send(embed=emb("🗑️ Ticket system reset"))
 
 
-# ---------------- 🔥 FIXED +SEND 100% WORKING ----------------
+# ---------------- 🔥 FIXED +SEND (ULTRA STABLE GIF / IMAGE / TEXT) ----------------
 
 @bot.command()
-async def send(ctx):
+async def send(ctx, *, args=None):
     if not is_owner(ctx):
         return await ctx.message.delete()
 
-    attachments = ctx.message.attachments
-    content = ctx.message.content.replace("+send", "", 1).strip()
-
     await ctx.message.delete()
+
+    if not args:
+        return
+
+    parts = args.split()
+
+    text_parts = []
+    media = None
+
+    for p in parts:
+        if p.startswith("http"):
+            media = p
+        else:
+            text_parts.append(p)
+
+    text = " ".join(text_parts)
 
     embed = discord.Embed(color=discord.Color.light_gray())
 
-    if content:
-        embed.description = content
+    if text:
+        embed.description = text
 
-    if len(attachments) > 0:
-        embed.set_image(url=attachments[0].url)
+    if media:
+        embed.set_image(url=media)
 
     await ctx.channel.send(embed=embed)
 
@@ -186,7 +199,7 @@ async def help(ctx):
         description="""
 +setupticket → setup system
 +unsetupticket → reset system
-+send → texte + image
++send → texte + GIF + image + lien
 +help → commandes
 """
     )
@@ -194,7 +207,7 @@ async def help(ctx):
     await ctx.send(embed=embed)
 
 
-# ---------------- AUTO DELETE COMMANDS ----------------
+# ---------------- AUTO DELETE ----------------
 
 @bot.event
 async def on_message(message):
