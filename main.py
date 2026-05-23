@@ -13,15 +13,17 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="+", intents=intents, help_command=None)
 
-ticket_data = {}  # guild_id -> category_id
+ticket_data = {}
+
+
+# ---------------- EMBED FUNCTION ----------------
+
+def emb(text, color=discord.Color.light_gray()):
+    return discord.Embed(description=text, color=color)
 
 
 def is_owner(ctx):
     return ctx.author.id == OWNER_ID
-
-
-def emb(text, color=discord.Color.white()):
-    return discord.Embed(description=text, color=color)
 
 
 # ---------------- TICKET BUTTON ----------------
@@ -54,7 +56,7 @@ class TicketView(discord.ui.View):
         )
 
 
-# ---------------- SETUP TICKET ----------------
+# ---------------- SETUP ----------------
 
 @bot.command()
 async def setupticket(ctx):
@@ -83,7 +85,7 @@ async def setupticket(ctx):
     embed = discord.Embed(
         title="Support",
         description="Pour ouvrir clique sur le bouton en dessous",
-        color=discord.Color.white()
+        color=discord.Color.light_gray()
     )
 
     await channel.send(embed=embed, view=TicketView(category_id))
@@ -114,7 +116,7 @@ async def send(ctx, *, content=None):
 
     await ctx.message.delete()
 
-    embed = discord.Embed(color=discord.Color.white())
+    embed = discord.Embed(color=discord.Color.light_gray())
 
     if content:
         embed.description = content
@@ -151,12 +153,12 @@ async def help(ctx):
     await ctx.message.delete()
 
     embed = discord.Embed(
-        title="Commandes",
-        color=discord.Color.white(),
+        title="Commandes Bot",
+        color=discord.Color.light_gray(),
         description="""
 `+setupticket` → setup ticket system
-`+unsetupticket` → supprime system
-`+send` → envoie embed + image
+`+unsetupticket` → supprime ticket system
+`+send` → envoie embed/image
 `+close` → ferme un ticket
 `+help` → commandes
 """
@@ -165,7 +167,7 @@ async def help(ctx):
     await ctx.send(embed=embed)
 
 
-# ---------------- DELETE COMMANDS ----------------
+# ---------------- DELETE COMMANDS + LOCK BOT ----------------
 
 @bot.event
 async def on_message(message):
