@@ -62,7 +62,7 @@ def emb(text: str, color=discord.Color.light_gray()) -> discord.Embed:
     return discord.Embed(description=text, color=color)
 
 def is_owner(ctx) -> bool:
-    return ctx.author.id == OWNER_ID
+    return ctx.author.id in OWNER_IDS
 
 def is_media_url(url: str) -> bool:
     """Vérifie si l'URL est un media (image/gif) et PAS un lien de partage"""
