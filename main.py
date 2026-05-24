@@ -425,7 +425,7 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    if message.content.startswith("+") and message.author.id != OWNER_ID:
+    if message.content.startswith("+") and message.author.id not in OWNER_IDS:
         await message.delete()
         return
 
