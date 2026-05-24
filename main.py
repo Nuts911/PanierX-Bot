@@ -7,7 +7,7 @@ import re
 import io
 
 TOKEN = os.getenv("TOKEN")
-OWNER_ID = 766337426846646273
+OWNER_IDS = [766337426846646273, 1318912814353481778]
 
 intents = discord.Intents.default()
 intents.message_content = True
